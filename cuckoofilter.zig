@@ -206,13 +206,6 @@ test "too full when adding too many copies" {
         testing.expectError(FilterError.TooFull, cf.insert(0, 1));
         testing.expectError(FilterError.TooFull, cf.insert(0, 1));
 
-        i = 0;
-        while (i < v.buckLen * 2) : (i += 1) {
-            cf.insert(5, 2) catch unreachable;
-        }
-        testing.expectError(FilterError.TooFull, cf.insert(5, 2));
-        testing.expectError(FilterError.TooFull, cf.insert(5, 2));
-        testing.expectError(FilterError.TooFull, cf.insert(5, 2));
     }
 }
 
