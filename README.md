@@ -122,7 +122,7 @@ TODO
 Testing 
 -------
 
-`zig test cucoofilter.zig`
+`zig test cuckoofilter.zig`
 
 Planned Features
 ----------------
