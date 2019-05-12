@@ -1,5 +1,5 @@
 # zig-cuckoofilter
-Hashing-function Agnostic Cuckoo Filters
+Hashing-function agnostic Cuckoo filters in Zig, for every C ABI compatible target
 
 **NOTE: this library is still WIP, I haven't yet finalized the interface
 and it's missing useful comptime errors to prevent misuse. 
@@ -122,7 +122,7 @@ TODO
 Testing 
 -------
 
-`zig test cucoofilter.zig`
+`zig test cuckoofilter.zig`
 
 Planned Features
 ----------------
