@@ -72,12 +72,14 @@ fn CuckooFilter(comptime FpType: type, comptime buckSize: usize) type {
             // Try primary bucket
             if (FREE_SLOT == self.scan(bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) return;
             // If too tull already, try to add the fp to the secondary slot without forcing
+            const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (FREE_SLOT != self.homeless_fp) {
-                if (FREE_SLOT == self.scan(bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) return
+                if (FREE_SLOT == self.scan(alt_bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) return
                 else return FilterError.TooFull;            
             }
+
             // We are now willing to force the insertion
-            self.homeless_bucket_idx = bucket_idx;
+            self.homeless_bucket_idx = alt_bucket_idx;
             self.homeless_fp = fp;
             var i : usize = 0;
             while (i < 500) : (i += 1) {
@@ -205,7 +207,14 @@ test "too full when adding too many copies" {
         testing.expectError(FilterError.TooFull, cf.insert(0, 1));
         testing.expectError(FilterError.TooFull, cf.insert(0, 1));
         testing.expectError(FilterError.TooFull, cf.insert(0, 1));
-
+        
+        i = 0;
+        while (i < v.buckLen * 2) : (i += 1) {
+            cf.insert(2, 1) catch unreachable;
+        }
+        testing.expectError(FilterError.TooFull, cf.insert(2, 1));
+        testing.expectError(FilterError.TooFull, cf.insert(2, 1));
+        testing.expectError(FilterError.TooFull, cf.insert(2, 1));
     }
 }
 
