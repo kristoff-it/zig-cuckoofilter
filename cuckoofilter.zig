@@ -371,5 +371,34 @@ test "small stress test" {
             }
             testing.expect(false_count < @divTrunc(iterations, 40)); // < 2.5%
         }
+
+        // Delete all items
+        {
+            iit.reset();
+            var iters: usize = 0;
+            while (iit.next()) |item| {
+                cf.delete(item.key, item.value) catch unreachable;
+                iters += 1;
+            }
+        }
+
+        // Test that memory contains 0 elements
+        {
+            var count: usize = 0;
+            for (@bytesToSlice(v.FpType, memory)) |fprint| {
+                if (fprint != 0) {
+                    count += 1;
+                }
+            }
+            testing.expect(0 == count);
+        }
+
+        // Test all items for presence (should all be false)
+        {
+            iit.reset();
+            while (iit.next()) |item| {
+                testing.expect(!cf.search(item.key, item.value));
+            }
+        }
     }
 }
