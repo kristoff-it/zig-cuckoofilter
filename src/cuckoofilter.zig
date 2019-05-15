@@ -3,24 +3,30 @@ const testing = std.testing;
 var   xoro = std.rand.DefaultPrng.init(42);
 
 const FREE_SLOT = 0;
-pub const FilterError = error {
-    BrokenFilter,
-    TooFull,
+
+pub const Errors = struct {
+    pub const Broken = error.Broken;
+    pub const TooFull = error.TooFull;
+    pub const BadLength = error.BadLength;
 };
 
 pub const Filter8 = CuckooFilter(u8, 4);
 pub const Filter16 = CuckooFilter(u16, 4);
 pub const Filter32 = CuckooFilter(u32, 2);
-pub const Filter64 = CuckooFilter(u64, 1);
 
 fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
-    const Bucket = [buckSize]Tfp;
     return struct {
         homeless_fp: Tfp,
         homeless_bucket_idx: usize,
-        buckets: [] align(1) Bucket,
-        count: usize,
+        buckets: [] align(Align) Bucket,
+        fpcount: usize,
+        broken: bool,
 
+        pub const Align = @alignOf(@IntType(false, buckSize * @typeInfo(Tfp).Int.bits));
+        pub const MaxError = 2.0 * @intToFloat(f32, buckSize) / @intToFloat(f32, 1 << @typeInfo(Tfp).Int.bits);
+        
+        const Bucket = [buckSize]Tfp;
+        const MinSize = @sizeOf(Tfp) * buckSize * 2;
         const Self = @This();
         const ScanMode = union(enum) {
             Set: Tfp,
@@ -29,42 +35,41 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             Search,
         };
 
-        pub fn max_error() f32 { 
-            return 2.0 * @intToFloat(f32, buckSize) / @intToFloat(f32, 1 << @typeInfo(Tfp).Int.bits);
-        }
-
         pub fn size_for(min_capacity: usize) usize {
             return size_for_exactly(min_capacity + @divTrunc(min_capacity, 5));
         }
 
         pub fn size_for_exactly(min_capacity: usize) usize {
             var res = std.math.pow(usize, 2, std.math.log2(min_capacity));
-            if (res != min_capacity) {
-                res <<= 1;
-            }
-            return res * @sizeOf(Tfp);
+            if (res != min_capacity) res <<= 1;
+            const requested_size = res * @sizeOf(Tfp);
+            return if (MinSize > requested_size) MinSize else requested_size;
         }
 
         pub fn capacity(size: usize) usize {
             return size / @sizeOf(Tfp); 
         }
 
-        pub fn init(memory: []u8) Self {
-            // TODO: check that memory is zeroed
-            // TODO: check that len is correct
+        pub fn init(memory: [] align(Align) u8) !Self {
+            const not_pow2 = memory.len != std.math.pow(usize, 2, std.math.log2(memory.len));
+            if (not_pow2 or memory.len < MinSize) {
+                return error.BadLength;
+            }
+            for (memory) |*x| x.* = 0;
             return Self {
                 .homeless_fp = FREE_SLOT,
                 .homeless_bucket_idx = undefined,
                 .buckets = @bytesToSlice(Bucket, memory),
-                .count = 0,
+                .fpcount = 0,
+                .broken = false,
             };
         }
 
-        pub fn count(self: *Self) usize {
-            return self.count;
+        pub fn count(self: *Self) !usize {
+            return if (self.broken) error.Broken else self.fpcount;
         }
 
-        pub fn maybe_contains(self: *Self, hash: u64, fingerprint: Tfp) bool {
+        pub fn maybe_contains(self: *Self, hash: u64, fingerprint: Tfp) !bool {
             const fp = if (FREE_SLOT == fingerprint) 1 else fingerprint;
             const bucket_idx = hash & (self.buckets.len - 1);
 
@@ -74,34 +79,39 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             // Try alt bucket
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Search)) return true
-            else return false;
+            else return if (self.broken) error.Broken else false;
         }   
 
         pub fn remove(self: *Self, hash: u64, fingerprint: Tfp) !void {
+            if (self.broken) return error.Broken;
             const fp = if (FREE_SLOT == fingerprint) 1 else fingerprint;
             const bucket_idx = hash & (self.buckets.len - 1);
 
             // Try primary bucket
             if (fp == self.scan(bucket_idx, fp, ScanMode.Delete)) {
-                self.count -= 1;
+                self.fpcount -= 1;
                 return;
             }
 
             // Try alt bucket
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Delete)) {
-                self.count -= 1;
+                self.fpcount -= 1;
                 return ;
-            } else return FilterError.BrokenFilter;
+            } else {
+                self.broken = true;
+                return error.Broken;
+            }
         }
 
         pub fn add(self: *Self, hash: u64, fingerprint: Tfp) !void {
+            if (self.broken) return error.Broken;
             const fp = if (FREE_SLOT == fingerprint) 1 else fingerprint;
             const bucket_idx = hash & (self.buckets.len - 1);
 
             // Try primary bucket
             if (FREE_SLOT == self.scan(bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) {
-                self.count += 1;
+                self.fpcount += 1;
                 return;
             }
 
@@ -109,20 +119,35 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (FREE_SLOT != self.homeless_fp) {
                 if (FREE_SLOT == self.scan(alt_bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) {
-                    self.count += 1;
+                    self.fpcount += 1;
                     return;
-                } else return FilterError.TooFull;            
+                } else return error.TooFull;            
             }
 
             // We are now willing to force the insertion
             self.homeless_bucket_idx = alt_bucket_idx;
             self.homeless_fp = fp;
-            self.count += 1;
+            self.fpcount += 1;
             var i : usize = 0;
             while (i < 500) : (i += 1) {
                 self.homeless_bucket_idx = self.compute_alt_bucket_idx(self.homeless_bucket_idx, self.homeless_fp);
                 self.homeless_fp = self.scan(self.homeless_bucket_idx, FREE_SLOT, ScanMode{.Force = self.homeless_fp});
                 if (FREE_SLOT == self.homeless_fp) return;
+            }
+            // If we went over the while loop, now the homeless slot is occupied.
+        }
+
+        pub fn is_toofull(self: *Self) bool {
+            return FREE_SLOT != self.homeless_fp;
+        }
+
+        pub fn fix_toofull(self: *Self) !void {
+            if (FREE_SLOT == self.homeless_fp) return
+            else {
+                const homeless_fp = self.homeless_fp;
+                self.homeless_fp = FREE_SLOT;
+                try self.add(self.homeless_bucket_idx, homeless_fp);
+                if (FREE_SLOT != self.homeless_fp) return error.TooFull;
             }
         }
 
@@ -181,8 +206,8 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
 
 
 test "Hx == (Hy XOR hash(fp))" {
-    var memory: [1<<20] u8 = undefined;
-    var cf = Filter8.init(memory[0..]);
+    var memory align(Filter8.Align) = []u8{0} ** (1<<20);
+    var cf = Filter8.init(memory[0..]) catch unreachable;
     testing.expect(0 == cf.compute_alt_bucket_idx(cf.compute_alt_bucket_idx(0, 'x'), 'x'));
     testing.expect(1 == cf.compute_alt_bucket_idx(cf.compute_alt_bucket_idx(1, 'x'), 'x'));
     testing.expect(42 == cf.compute_alt_bucket_idx(cf.compute_alt_bucket_idx(42, 'x'), 'x'));
@@ -195,18 +220,21 @@ test "Hx == (Hy XOR hash(fp))" {
 }
 
 fn test_not_broken(cf: var) void {
-    testing.expect(!cf.maybe_contains(2, 'a'));
+    testing.expect(!(cf.maybe_contains(2, 'a') catch unreachable));
+    testing.expect(0 == cf.count() catch unreachable);
     cf.add(2, 'a') catch unreachable;
-    testing.expect(cf.maybe_contains(2, 'a'));
-    testing.expect(!cf.maybe_contains(0, 'a'));
-    testing.expect(!cf.maybe_contains(1, 'a'));
+    testing.expect(cf.maybe_contains(2, 'a') catch unreachable);
+    testing.expect(!(cf.maybe_contains(0, 'a') catch unreachable));
+    testing.expect(!(cf.maybe_contains(1, 'a') catch unreachable));
+    testing.expect(1 == cf.count() catch unreachable);
     cf.remove(2, 'a') catch unreachable;
-    testing.expect(!cf.maybe_contains(2, 'a'));
+    testing.expect(!(cf.maybe_contains(2, 'a') catch unreachable));
+    testing.expect(0 == cf.count() catch unreachable);
 }
 
 test "is not completely broken" {
-    var memory = []u8{0} ** 16;
-    var cf = Filter8.init(memory[0..]);
+    var memory align(Filter8.Align) = []u8{0} ** 16;
+    var cf = Filter8.init(memory[0..]) catch unreachable;
     test_not_broken(&cf);
 }
 
@@ -221,35 +249,39 @@ const SupportedVersions = []Version {
     Version { .Tfp = u8,  .buckLen = 4, .cftype = Filter8},
     Version { .Tfp = u16, .buckLen = 4, .cftype = Filter16},
     Version { .Tfp = u32, .buckLen = 2, .cftype = Filter32},
-    Version { .Tfp = u64, .buckLen = 1, .cftype = Filter64},
 };
 
 test "generics are not completely broken" {
     inline for (SupportedVersions) |v| {
-        var memory = []u8{0} ** 1024;
-        var cf = CuckooFilter(v.Tfp, v.buckLen).init(memory[0..]);
+        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var cf = v.cftype.init(memory[0..]) catch unreachable;
         test_not_broken(&cf);
     }
 }
 
 test "too full when adding too many copies" {
     inline for (SupportedVersions) |v| {
-        var memory = []u8{0} ** 1024;
-        var cf = CuckooFilter(v.Tfp, v.buckLen).init(memory[0..]);
-        var fp = @intCast(v.Tfp, 1);
+        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var cf = v.cftype.init(memory[0..]) catch unreachable;
         var i: usize = 0;
         while (i < v.buckLen * 2) : (i += 1) {
             cf.add(0, 1) catch unreachable;
         }
+
+        testing.expect(false == cf.is_toofull());
         
         // The first time we go over-board we can still occupy
         // the homeless slot, so this won't fail:
         cf.add(0, 1) catch unreachable;
+        testing.expect(true == cf.is_toofull());
         
         // We now are really full.
-        testing.expectError(FilterError.TooFull, cf.add(0, 1));
-        testing.expectError(FilterError.TooFull, cf.add(0, 1));
-        testing.expectError(FilterError.TooFull, cf.add(0, 1));
+        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expect(true == cf.is_toofull());
+        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expect(true == cf.is_toofull());
+        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expect(true == cf.is_toofull());
         
         i = 0;
         while (i < v.buckLen * 2) : (i += 1) {
@@ -257,9 +289,37 @@ test "too full when adding too many copies" {
         }
 
         // Homeless slot is already occupied.
-        testing.expectError(FilterError.TooFull, cf.add(2, 1));
-        testing.expectError(FilterError.TooFull, cf.add(2, 1));
-        testing.expectError(FilterError.TooFull, cf.add(2, 1));
+        testing.expectError(Errors.TooFull, cf.add(2, 1));
+        testing.expectError(Errors.TooFull, cf.add(2, 1));
+        testing.expectError(Errors.TooFull, cf.add(2, 1));
+
+        // Try to fix the situation
+        testing.expect(true == cf.is_toofull());
+
+        // This should fail
+        testing.expectError(Errors.TooFull, cf.fix_toofull());
+
+        // Make it fixable
+        cf.remove(0, 1) catch unreachable;
+        cf.fix_toofull() catch unreachable;
+
+        testing.expect(false == cf.is_toofull());
+
+        cf.add(2, 1) catch unreachable;
+        testing.expect(true == cf.is_toofull());
+    }
+}
+
+test "properly breaks when misused" {
+    inline for (SupportedVersions) |v| {
+        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var cf = v.cftype.init(memory[0..]) catch unreachable;
+        var fp = @intCast(v.Tfp, 1);
+
+        testing.expectError(Errors.Broken, cf.remove(2, 1));
+        testing.expectError(Errors.Broken, cf.add(2, 1));
+        testing.expectError(Errors.Broken, cf.count());
+        testing.expectError(Errors.Broken, cf.maybe_contains(2, 1));
     }
 }
 
@@ -317,14 +377,14 @@ test "small stress test" {
         //defer test_cases.false_positives.deinit();
 
         // Build an appropriately-sized filter
-        var memory = []u8{0} ** v.cftype.size_for(iterations);
-        var cf = v.cftype.init(memory[0..]);
+        var memory align(v.cftype.Align) = []u8{0} ** v.cftype.size_for(iterations);
+        var cf = v.cftype.init(memory[0..]) catch unreachable;
         
         // Test all items for presence (should all be false)
         {
             iit.reset();
             while (iit.next()) |item| {
-                testing.expect(!cf.maybe_contains(item.key, item.value));
+                testing.expect(!(cf.maybe_contains(item.key, item.value) catch unreachable));
             }
         }
 
@@ -333,9 +393,11 @@ test "small stress test" {
             iit.reset();
             var iters: usize = 0;
             while (iit.next()) |item| {
+                testing.expect(iters == cf.count() catch unreachable);
                 cf.add(item.key, item.value) catch unreachable;
                 iters += 1;
             }
+            testing.expect(iters == cf.count() catch unreachable);
         }
 
         // Test that memory contains the right number of elements
@@ -347,13 +409,14 @@ test "small stress test" {
                 }
             }
             testing.expect(iterations == count);
+            testing.expect(iterations == cf.count() catch unreachable);
         }
 
         // Test all items for presence (should all be true)
         {
             iit.reset();
             while (iit.next()) |item| {
-                testing.expect(cf.maybe_contains(item.key, item.value));
+                testing.expect(cf.maybe_contains(item.key, item.value) catch unreachable);
             }
         }
 
@@ -368,9 +431,10 @@ test "small stress test" {
                 count += 1;
                 if (count >= max) break;
 
-                testing.expect(cf.maybe_contains(item.key, item.value));
+                testing.expect(cf.maybe_contains(item.key, item.value) catch unreachable);
                 cf.remove(item.key, item.value) catch unreachable;
-                if(cf.maybe_contains(item.key, item.value)) false_count += 1;
+                testing.expect(iterations - count == cf.count() catch unreachable);
+                if(cf.maybe_contains(item.key, item.value) catch unreachable) false_count += 1;
             }
             testing.expect(false_count < @divTrunc(iterations, 40)); // < 2.5%
 
@@ -381,7 +445,7 @@ test "small stress test" {
                 count += 1;
                 if (count >= max) break;
 
-                if(cf.maybe_contains(item.key, item.value)) false_count += 1;
+                if(cf.maybe_contains(item.key, item.value) catch unreachable) false_count += 1;
             }
             testing.expect(false_count < @divTrunc(iterations, 40)); // < 2.5%
         }
@@ -391,7 +455,7 @@ test "small stress test" {
             fit.reset();
             var false_count: usize = 0;
             while (fit.next()) |item| {
-                if(cf.maybe_contains(item.key, item.value)) false_count += 1;
+                if(cf.maybe_contains(item.key, item.value) catch unreachable) false_count += 1;
             }
             testing.expect(false_count < @divTrunc(iterations, 40)); // < 2.5%
         }
@@ -407,7 +471,7 @@ test "small stress test" {
                 if (count >= max) break;
 
                 cf.add(item.key, item.value) catch unreachable;
-                testing.expect(cf.maybe_contains(item.key, item.value));
+                testing.expect(cf.maybe_contains(item.key, item.value) catch unreachable);
             }
         }
 
@@ -416,7 +480,7 @@ test "small stress test" {
             fit.reset();
             var false_count: usize = 0;
             while (fit.next()) |item| {
-                if(cf.maybe_contains(item.key, item.value)) false_count += 1;
+                if(cf.maybe_contains(item.key, item.value) catch unreachable) false_count += 1;
             }
             testing.expect(false_count < @divTrunc(iterations, 40)); // < 2.5%
         }
@@ -440,13 +504,14 @@ test "small stress test" {
                 }
             }
             testing.expect(0 == count);
+            testing.expect(0 == cf.count() catch unreachable);
         }
 
         // Test all items for presence (should all be false)
         {
             iit.reset();
             while (iit.next()) |item| {
-                testing.expect(!cf.maybe_contains(item.key, item.value));
+                testing.expect(!(cf.maybe_contains(item.key, item.value) catch unreachable));
             }
         }
     }
