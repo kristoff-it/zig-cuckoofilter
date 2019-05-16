@@ -292,8 +292,7 @@ pub fn main() !void {
     // To ensure you never have to deal with these problems,
     // make sure you:
     //    (1) Never overfill/undersize a filter.
-    //    (2) Get entropy right for hasing and, equally importantly,
-    //        for the fingerprinting function.
+    //    (2) Get entropy right for the fingerprinting function.
     // 
     // A trick to get (2) right is to pluck it not out of the 
     // original element, but out of hash2(element). Just make sure 
