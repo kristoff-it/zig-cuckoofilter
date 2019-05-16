@@ -81,10 +81,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Search)) return true;
             
             // Try homeless slot
-            const same_main = (self.homeless_bucket_idx == bucket_idx);
-            const same_alt = (self.homeless_bucket_idx == alt_bucket_idx);
-            const same_fp = (self.homeless_fp == fp);
-            if (same_fp and (same_main or same_alt)) return true
+            if (self.is_homeless_fp(bucket_idx, alt_bucket_idx, fp)) return true
             else return if (self.broken) error.Broken else false;
         }   
 
@@ -107,10 +104,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             }
 
             // Try homeless slot
-            const same_main = (self.homeless_bucket_idx == bucket_idx);
-            const same_alt = (self.homeless_bucket_idx == alt_bucket_idx);
-            const same_fp = (self.homeless_fp == fp);
-            if (same_fp and (same_main or same_alt)){
+            if (self.is_homeless_fp(bucket_idx, alt_bucket_idx, fp)){
                 self.homeless_fp = FREE_SLOT;
                 self.fpcount -= 1;
                 return;
@@ -166,6 +160,13 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
                 try self.add(self.homeless_bucket_idx, homeless_fp);
                 if (FREE_SLOT != self.homeless_fp) return error.TooFull;
             }
+        }
+
+        inline fn is_homeless_fp(self: *Self, bucket_idx: usize, alt_bucket_idx: usize, fp: Tfp) bool {
+            const same_main = (self.homeless_bucket_idx == bucket_idx);
+            const same_alt = (self.homeless_bucket_idx == alt_bucket_idx);
+            const same_fp = (self.homeless_fp == fp);
+            return (same_fp and (same_main or same_alt));
         }
 
         inline fn compute_alt_bucket_idx(self: *Self, bucket_idx: usize, fp: Tfp) usize {
