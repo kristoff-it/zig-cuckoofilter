@@ -62,10 +62,46 @@ caller.*
 
 Choosing the right settings
 ---------------------------
-The code example will walk you through the whole process.
+The extended usage example will walk you through the whole process.
 
-Usage Example
+Usage
 -------------
+
+### Quickstart
+```zig
+const std = @import("std");
+const hasher = std.hash.Fnv1a_64;
+const cuckoo = @import("./src/cuckoofilter.zig");
+
+fn fingerprint(x: []const u8) u8 {
+    return x[0];
+}
+
+pub fn main() !void {
+    const universe_size = 1000000;
+    const memsize = comptime cuckoo.Filter8.size_for(universe_size);
+
+    var memory: [memsize]u8 align(cuckoo.Filter8.Align) = undefined;
+    var cf = try cuckoo.Filter8.init(memory[0..]);
+
+    const banana_h = hasher.hash("banana");
+    const banana_fp = fingerprint("banana");
+
+    const apple_h = hasher.hash("apple");
+    const apple_fp = fingerprint("apple");
+
+    _ = try cf.maybe_contains(banana_h, banana_fp); // => false
+    _ = try cf.count();                             // => 0
+    try cf.add(banana_h, banana_fp);
+    _ = try cf.maybe_contains(banana_h, banana_fp); // => true
+    _ = try cf.maybe_contains(apple_h, apple_fp);   // => false
+    _ = try cf.count();                             // => 1
+    try cf.remove(banana_h, banana_fp);
+    _ = try cf.maybe_contains(banana_h, banana_fp); // => false
+    _ = try cf.count();                             // => 0
+}
+```
+### Extended example
 This is also available in [example.zig](example.zig).
 ```zig
 const std = @import("std");
