@@ -76,9 +76,15 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             // Try primary bucket
             if (fp == self.scan(bucket_idx, fp, ScanMode.Search)) return true;
 
-            // Try alt bucket
+            // Try alt bucket  
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
-            if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Search)) return true
+            if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Search)) return true;
+            
+            // Try homeless slot
+            const same_main = (self.homeless_bucket_idx == bucket_idx);
+            const same_alt = (self.homeless_bucket_idx == alt_bucket_idx);
+            const same_fp = (self.homeless_fp == fp);
+            if (same_fp and (same_main or same_alt)) return true
             else return if (self.broken) error.Broken else false;
         }   
 
@@ -97,11 +103,22 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Delete)) {
                 self.fpcount -= 1;
-                return ;
-            } else {
-                self.broken = true;
-                return error.Broken;
+                return;
             }
+
+            // Try homeless slot
+            const same_main = (self.homeless_bucket_idx == bucket_idx);
+            const same_alt = (self.homeless_bucket_idx == alt_bucket_idx);
+            const same_fp = (self.homeless_fp == fp);
+            if (same_fp and (same_main or same_alt)){
+                self.homeless_fp = FREE_SLOT;
+                self.fpcount -= 1;
+                return;
+            }
+
+            // Oh no...
+            self.broken = true;
+            return error.Broken;
         }
 
         pub fn add(self: *Self, hash: u64, fingerprint: Tfp) !void {
@@ -206,7 +223,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
 
 
 test "Hx == (Hy XOR hash(fp))" {
-    var memory align(Filter8.Align) = []u8{0} ** (1<<20);
+    var memory: [1<<20]u8 align(Filter8.Align) = undefined;
     var cf = Filter8.init(memory[0..]) catch unreachable;
     testing.expect(0 == cf.compute_alt_bucket_idx(cf.compute_alt_bucket_idx(0, 'x'), 'x'));
     testing.expect(1 == cf.compute_alt_bucket_idx(cf.compute_alt_bucket_idx(1, 'x'), 'x'));
@@ -220,20 +237,20 @@ test "Hx == (Hy XOR hash(fp))" {
 }
 
 fn test_not_broken(cf: var) void {
-    testing.expect(!(cf.maybe_contains(2, 'a') catch unreachable));
+    testing.expect(false == cf.maybe_contains(2, 'a') catch unreachable);
     testing.expect(0 == cf.count() catch unreachable);
     cf.add(2, 'a') catch unreachable;
     testing.expect(cf.maybe_contains(2, 'a') catch unreachable);
-    testing.expect(!(cf.maybe_contains(0, 'a') catch unreachable));
-    testing.expect(!(cf.maybe_contains(1, 'a') catch unreachable));
+    testing.expect(false == cf.maybe_contains(0, 'a') catch unreachable);
+    testing.expect(false == cf.maybe_contains(1, 'a') catch unreachable);
     testing.expect(1 == cf.count() catch unreachable);
     cf.remove(2, 'a') catch unreachable;
-    testing.expect(!(cf.maybe_contains(2, 'a') catch unreachable));
+    testing.expect(false == cf.maybe_contains(2, 'a') catch unreachable);
     testing.expect(0 == cf.count() catch unreachable);
 }
 
 test "is not completely broken" {
-    var memory align(Filter8.Align) = []u8{0} ** 16;
+    var memory: [16]u8 align(Filter8.Align) = undefined;
     var cf = Filter8.init(memory[0..]) catch unreachable;
     test_not_broken(&cf);
 }
@@ -253,7 +270,7 @@ const SupportedVersions = []Version {
 
 test "generics are not completely broken" {
     inline for (SupportedVersions) |v| {
-        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var memory: [1024]u8 align(v.cftype.Align) = undefined;
         var cf = v.cftype.init(memory[0..]) catch unreachable;
         test_not_broken(&cf);
     }
@@ -261,27 +278,27 @@ test "generics are not completely broken" {
 
 test "too full when adding too many copies" {
     inline for (SupportedVersions) |v| {
-        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var memory: [1024]u8 align(v.cftype.Align) = undefined;
         var cf = v.cftype.init(memory[0..]) catch unreachable;
         var i: usize = 0;
         while (i < v.buckLen * 2) : (i += 1) {
             cf.add(0, 1) catch unreachable;
         }
 
-        testing.expect(false == cf.is_toofull());
+        testing.expect(!cf.is_toofull());
         
         // The first time we go over-board we can still occupy
         // the homeless slot, so this won't fail:
         cf.add(0, 1) catch unreachable;
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
         
         // We now are really full.
         testing.expectError(Errors.TooFull, cf.add(0, 1));
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
         testing.expectError(Errors.TooFull, cf.add(0, 1));
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
         testing.expectError(Errors.TooFull, cf.add(0, 1));
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
         
         i = 0;
         while (i < v.buckLen * 2) : (i += 1) {
@@ -294,7 +311,7 @@ test "too full when adding too many copies" {
         testing.expectError(Errors.TooFull, cf.add(2, 1));
 
         // Try to fix the situation
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
 
         // This should fail
         testing.expectError(Errors.TooFull, cf.fix_toofull());
@@ -303,10 +320,23 @@ test "too full when adding too many copies" {
         cf.remove(0, 1) catch unreachable;
         cf.fix_toofull() catch unreachable;
 
-        testing.expect(false == cf.is_toofull());
+        testing.expect(!cf.is_toofull());
 
         cf.add(2, 1) catch unreachable;
-        testing.expect(true == cf.is_toofull());
+        testing.expect(cf.is_toofull());
+
+        // Delete now all instances except the homeless one
+        i = 0;
+        while (i < v.buckLen * 2) : (i += 1) {
+            cf.remove(2, 1) catch unreachable;
+        }
+
+        // Should be able to find the homeless fp
+        testing.expect(true == cf.maybe_contains(2, 1) catch unreachable);
+
+        // Delete it and try to find it
+        cf.remove(2, 1) catch unreachable;
+        testing.expect(false == cf.maybe_contains(2, 1) catch unreachable);
     }
 }
 
