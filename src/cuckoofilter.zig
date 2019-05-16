@@ -333,7 +333,7 @@ test "too full when adding too many copies" {
         }
 
         // Should be able to find the homeless fp
-        testing.expect(true == cf.maybe_contains(2, 1) catch unreachable);
+        testing.expect(cf.maybe_contains(2, 1) catch unreachable);
 
         // Delete it and try to find it
         cf.remove(2, 1) catch unreachable;
