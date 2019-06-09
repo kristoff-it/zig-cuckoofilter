@@ -11,9 +11,9 @@ var ArrayType = require('ref-array');
 // $ zig build-lib -dynamic --release-fast src/cuckoofilter_c.zig
 //
 // On macOS this currently produces a dylib file that ld doesn't like so I had to use gcc 
-// as follows:
+// as follows (the first command produces cuckoofilter_c.o, which is used by the second command):
 //
-// $ zig build-obj --release-fast  src/cuckoofilter_c.zig
+// $ zig build-obj --release-fast  src/cuckoofilter_c.zig 
 // $ gcc -dynamiclib -o libcuckoofilter_c.0.0.0.dylib cuckoofilter_c.o
 //
 const dynamic_library_path = 'libcuckoofilter_c.0.0.0';

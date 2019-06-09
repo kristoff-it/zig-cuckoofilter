@@ -51,8 +51,11 @@ work but on the upside:
   hashing-function agnostic**.
 
 ### It's written in Zig (https://ziglang.org)
-Which means that the code is clear, free of C gotchas, and that you can link to it 
-from any C ABI compatible language.
+Which means that the code is clear, free of C gotchas, and that you can dynamically 
+link to it from any C ABI compatible language. Zig is simpler and safer than C but 
+operates at the same abstraction level (i.e. no gc, explicit memory management, 
+pointers, etc). Zig can compile C code and Zig shared object files can be used 
+in a normal C compilation process.
 
 
 Using zig-cuckoofilter from C or other languages (Python, Go, JavaScript, ...)
