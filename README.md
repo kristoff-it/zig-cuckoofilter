@@ -73,7 +73,7 @@ It's Zig code so you can't copy it verbatim, but for each function there's a C e
 You can download pre-compiled binaries from the Release section on GitHub.
 To compile the code yourself you need to 
     [install the Zig compiler](https://ziglang.org).
-Each file will have comments that will tell you more precisely what you need.
+Each file in [`c-abi-examples/`](c-abi-examples/) will have comments that will tell you more precisely what you need.
 
 Please read the 
     [official Zig documentation](https://ziglang.org/documentation/master/)
