@@ -77,7 +77,7 @@ Each file in [`c-abi-examples/`](c-abi-examples/) will have comments that will t
 
 Please read the 
     [official Zig documentation](https://ziglang.org/documentation/master/)
-to know more about available targets, build modes, static/dynamic linking, etc.
+to learn more about available targets, build modes, static/dynamic linking, etc.
 
 
 Usage

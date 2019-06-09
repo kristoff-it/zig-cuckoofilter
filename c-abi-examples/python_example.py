@@ -87,10 +87,10 @@ ffi.cdef("""
 
 cuckoo = ffi.dlopen(dynamic_library_path)
 
-# Instantiate the memory for a new filter:
+# Instantiate memory for a new filter:
 cf8 = ffi.new("struct Filter8 *")
 
-# Instantiate the memory for the filter's bucklets:
+# Instantiate memory for the filter's buckets:
 memory = ffi.new("uint8_t[]", 1024)
 
 # Initialize the filter:
