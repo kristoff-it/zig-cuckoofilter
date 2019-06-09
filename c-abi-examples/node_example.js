@@ -22,11 +22,8 @@ const dynamic_library_path = 'libcuckoofilter_c.0.0.0';
 var ByteArray = ArrayType('uint8');
 var IntPtr = ref.refType('int');
 
-// Just importing the bare minimum functionality 
-// to make this example script work.
-var Filter8 = Struct({
-  'cf': ArrayType("uint8", 56),
-});
+// Just importing the bare minimum functionality to make this example script work.
+var Filter8 = Struct({ 'cf': ArrayType("uint8", 56) });
 var Filter8Ptr = ref.refType(Filter8);
 var Cuckoo = ffi.Library(dynamic_library_path, {
   "cf_init8":           [ 'int', [ByteArray, 'int', Filter8Ptr] ],
