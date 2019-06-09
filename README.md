@@ -59,14 +59,14 @@ Using zig-cuckoofilter from C or other languages (Python, Go, JavaScript, ...)
 ------------------------------------------------------------------------------
 
 ### Read the provided examples
-In [`c-abi-examples`](c-abi-examples/) you will find a few different simple examples
+In [`c-abi-examples/`](c-abi-examples/) you will find a few different simple examples
 on how to use the library from C code or in your language of choice by using the C 
 Foreign Function Interface.
 
 
-### Read the rest of this README. 
+### Read the rest of this README 
 To learn how to use all the functionalities of this library, read the rest of the README.
-It's Zig so you can't copy it verbatim, but for each function there's a C equivalent in
+It's Zig code so you can't copy it verbatim, but for each function there's a C equivalent in
     [`cuckoofilter_c.zig`](src/cuckoofilter_c.zig).
 
 ### Download binaries or compile it yourself
