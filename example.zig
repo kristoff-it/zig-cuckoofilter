@@ -87,13 +87,25 @@ pub fn main() !void {
     // The filter can also be used with dynamic memory.
     // It's up to you to manage that via an allocator.
     const example_allocator = std.heap.c_allocator;
+
+    // Don't forget to free the memory afterwards.
     const memsize32 = comptime cuckoo.Filter32.size_for_exactly(64);
     var dyn_memory = try example_allocator.alignedAlloc(u8, cuckoo.Filter32.Align, memsize32);
-    
-    // Instantiate the filter and remember to free 
-    // the memory afterwards:
-    var dyn_cf32 = try cuckoo.Filter32.init(dyn_memory);
     defer example_allocator.free(dyn_memory);
+
+    var dyn_cf32 = try example_allocator.create(cuckoo.Filter32);
+    defer example_allocator.destroy(dyn_cf32);
+    dyn_cf32.* = try cuckoo.Filter32.init(dyn_memory);
+
+
+    // When restoring a persisted filter, you should only persist the individual fields
+    // as, for example, .buckets is a slice that points to `dyn_memory` which would be 
+    // invalid upon restore (wrong pointer) and just a waste of space when stored.
+    // Upon loading, to reconnect the filter and its `dyn_memory`, use bytesToBuckets.
+    // Here's an example (which is not necessary to make this script work, as we just created
+    // the entire filter):
+    //
+    // dyn_cf32.buckets = cuckoo.Filter32.bytesToBuckets(dyn_memory);
 
     // 
     // USAGE FAILURE SCENARIOS
@@ -112,7 +124,7 @@ pub fn main() !void {
     // No more space for items with equal hash and fp,
     // next insert will fail.
     dyn_cf32.add(pear_h, pear_fp) catch |err| switch (err) {
-        cuckoo.Errors.TooFull => std.debug.warn("yep, too full\n"),
+        error.TooFull => std.debug.warn("yep, too full\n"),
         else => unreachable,
     };
 
@@ -131,17 +143,19 @@ pub fn main() !void {
     //    all operations, as it is now impossible to know what
     //    the correct state would be.
     dyn_cf32.remove(0, 0) catch |err| switch (err) {
-        cuckoo.Errors.Broken => std.debug.warn(".remove, broken\n"),
+        error.Broken => std.debug.warn(".remove, broken\n"),
     };
+
+    _ = dyn_cf32.is_broken(); // => true
     dyn_cf32.add(orange_fp, orange_fp) catch |err| switch (err) {
-        cuckoo.Errors.Broken => std.debug.warn(".add, broken\n"),
-        cuckoo.Errors.TooFull => {},
+        error.Broken => std.debug.warn(".add, broken\n"),
+        error.TooFull => {},
     };
 
     if (dyn_cf32.count()) |_| {
         std.debug.warn(".count, works\n"); // won't be printed
     } else |err| switch (err) {
-        cuckoo.Errors.Broken => std.debug.warn(".count, broken\n")
+        error.Broken => std.debug.warn(".count, broken\n")
     }
 
     // Since searching does not mutate the filter, if the item 
@@ -149,11 +163,12 @@ pub fn main() !void {
     _ = try dyn_cf32.maybe_contains(orange_h, orange_fp); // => true
 
     // But if an item is not found, we don't know if it was wrongly
-    // deleted or not, so the filter has to return an error. 
+    // deleted or not, so the filter has to return an error in order
+    // to ensure that it does not return a false negative response.
     if (dyn_cf32.maybe_contains(0, 0)) |_| {
         std.debug.warn(".maybe_contains, works\n"); // won't be printed
     } else |err| switch (err) {
-        cuckoo.Errors.Broken => std.debug.warn(".maybe_contains, broken\n")
+        error.Broken => std.debug.warn(".maybe_contains, broken\n")
     }
     
     // You should *NEVER* get into that situation. If you do, it's 
@@ -173,7 +188,7 @@ pub fn main() !void {
     if (cuckoo.Filter8.init(memory[1..13])) |_| {
         std.debug.warn(".init, works\n"); // won't be printed
     } else |err| switch (err) {
-        cuckoo.Errors.BadLength => std.debug.warn(".init failed, use .size_for()!\n")
+        error.BadLength => std.debug.warn(".init failed, use .size_for()!\n")
     }
 
     //
@@ -206,8 +221,8 @@ pub fn main() !void {
     // Try to fix the situation:
     if (bad_situation) {
         dyn_cf32.fix_toofull() catch |err| switch (err) {
-            cuckoo.Errors.Broken => {},
-            cuckoo.Errors.TooFull => {},
+            error.Broken => {},
+            error.TooFull => {},
         };
     }
 
@@ -231,6 +246,41 @@ pub fn main() !void {
     // little entropy, and be aware of the increased computational 
     // cost. Secondary hashing might be worth it for semi-strucutred
     // data where you might find it hard to know if you're plucking
-    // "variable" data or part of the structure (e.g. JSON strings),
-    // since the latter is bound to have a lower entropic yield .
+    // "variable" data or part of the structure (e.g. JSON data),
+    // since the latter is bound to have lower entropy.
+
+    //
+    // PRNG Stuff
+    //
+
+    // Cuckoo Filters need a random number generator to decide which 
+    // fingerprint to evict when a given bucket pair is full. This
+    // library provides a default implementation that uses the Zig 
+    // standard library's Xoroshiro implementation, seeded by default to 42.
+
+    // If your application has short-lived sessions, a static seed won't be 
+    // good enough, as it will basically result in giving out the same
+    // number over and over again, similarly to what is shown in that one
+    // dilbert strip. To fix that use seed_default_prng:
+    var buf: [8]u8 = undefined;
+    try std.crypto.randomBytes(buf[0..]);
+    const seed = std.mem.readIntSliceLittle(u64, buf[0..8]);
+    cuckoo.seed_default_prng(seed);
+
+    // Additionally, you might also want to provide your own PRNG 
+    // implementation, either because you have specific needs (CSPRNG) or
+    // because you might want to make the filter fully deterministic and thus
+    // need to be able to persist and restore the PRNG's state.
+    // You can customize the PRNG of each filter by providing an appropriate
+    // function pointer:
+    dyn_cf32.rand_fn = DilbertRandom;
+
+    // From now on `dyn_cf32` will stop using the default implementation
+    // (shared by default by all filters) and will instead only use the 
+    // provided function. If you use this functionality, *make sure to
+    // set the function pointer again when loading the filter from disk*.
 }
+
+fn DilbertRandom() u1 {
+    return 1;
+} 

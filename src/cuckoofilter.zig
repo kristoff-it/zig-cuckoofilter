@@ -1,19 +1,38 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const testing = std.testing;
-var   xoro = std.rand.DefaultPrng.init(42);
 
 const FREE_SLOT = 0;
 
-pub const Errors = struct {
-    pub const Broken = error.Broken;
-    pub const TooFull = error.TooFull;
-    pub const BadLength = error.BadLength;
-};
+// Use the provided function to re-seed the default PRNG implementation.
+var xoro = std.rand.DefaultPrng.init(42);
+pub fn seed_default_prng(seed: u64) void {
+    xoro.seed(seed);
+}
 
+// Default PRNG implementation.
+// By overriding .rand_fn you can provide your own custom PRNG implementation.
+// Useful in adversarial situations (CSPRNG) or when you need deterministic behavior
+// from the filter, as it requires to be able to save and restore the PRNG's state.
+// You can use Filter<X>.RandomFn to see the function type you need to fulfill.
+fn XoroRandFnImpl (comptime T: type) type {
+    return struct {
+        fn random () T {
+            return xoro.random.int(T);
+        }
+    };
+}
+
+
+// Supported CuckooFilter implementations.
+// Bucket size is chosen mainly to keep the bucket 64bit word-sized, or under.
+// This way reading a bucket requires a single memory fetch. 
+// Filter8 does not have 8-fp wide buckets to keep the error rate under 3%,
+// as this is the cutoff point where Cuckoo Filters become more space-efficient
+// than Bloom. We also enforce memory alignment.
 pub const Filter8 = CuckooFilter(u8, 4);
 pub const Filter16 = CuckooFilter(u16, 4);
 pub const Filter32 = CuckooFilter(u32, 2);
-
 fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
     return struct {
         homeless_fp: Tfp,
@@ -21,16 +40,20 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
         buckets: [] align(Align) Bucket,
         fpcount: usize,
         broken: bool,
+        rand_fn: ?RandomFn,
 
-        pub const Align = @alignOf(@IntType(false, buckSize * @typeInfo(Tfp).Int.bits));
+        pub const FPType = Tfp;
+        pub const Align = std.math.min(@alignOf(usize), @alignOf(@IntType(false, buckSize * @typeInfo(Tfp).Int.bits)));
         pub const MaxError = 2.0 * @intToFloat(f32, buckSize) / @intToFloat(f32, 1 << @typeInfo(Tfp).Int.bits);
-        
+        pub const RandomFn = fn () BucketSizeType;
+
+        const BucketSizeType = @IntType(false, comptime std.math.log2(buckSize));
         const Bucket = [buckSize]Tfp;
         const MinSize = @sizeOf(Tfp) * buckSize * 2;
         const Self = @This();
-        const ScanMode = union(enum) {
-            Set: Tfp,
-            Force: Tfp,
+        const ScanMode = enum {
+            Set,
+            Force,
             Delete,
             Search,
         };
@@ -50,18 +73,24 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             return size / @sizeOf(Tfp); 
         }
 
-        pub fn init(memory: [] align(Align) u8) !Self {
+        // Use bytesToBuckets when you have persisted the filter and need to restore it.
+        // This will allow to cast back your bytes slice in the correct type for the .buckets
+        // property. Make sure you still have the right alignment when loading the data back!
+        pub fn bytesToBuckets(memory: [] align(Align) u8) ![] align(Align) Bucket {
             const not_pow2 = memory.len != std.math.pow(usize, 2, std.math.log2(memory.len));
-            if (not_pow2 or memory.len < MinSize) {
-                return error.BadLength;
-            }
+            if (not_pow2 or memory.len < MinSize) return error.BadLength;
+            return @bytesToSlice(Bucket, memory);
+        }
+
+        pub fn init(memory: [] align(Align) u8) !Self {
             for (memory) |*x| x.* = 0;
             return Self {
                 .homeless_fp = FREE_SLOT,
                 .homeless_bucket_idx = undefined,
-                .buckets = @bytesToSlice(Bucket, memory),
+                .buckets = try bytesToBuckets(memory),
                 .fpcount = 0,
                 .broken = false,
+                .rand_fn = null,
             };
         }
 
@@ -74,11 +103,11 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             const bucket_idx = hash & (self.buckets.len - 1);
 
             // Try primary bucket
-            if (fp == self.scan(bucket_idx, fp, ScanMode.Search)) return true;
+            if (fp == self.scan(bucket_idx, fp, .Search, FREE_SLOT)) return true;
 
             // Try alt bucket  
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
-            if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Search)) return true;
+            if (fp == self.scan(alt_bucket_idx, fp, .Search, FREE_SLOT)) return true;
             
             // Try homeless slot
             if (self.is_homeless_fp(bucket_idx, alt_bucket_idx, fp)) return true
@@ -91,14 +120,14 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             const bucket_idx = hash & (self.buckets.len - 1);
 
             // Try primary bucket
-            if (fp == self.scan(bucket_idx, fp, ScanMode.Delete)) {
+            if (fp == self.scan(bucket_idx, fp, .Delete, FREE_SLOT)) {
                 self.fpcount -= 1;
                 return;
             }
 
             // Try alt bucket
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
-            if (fp == self.scan(alt_bucket_idx, fp, ScanMode.Delete)) {
+            if (fp == self.scan(alt_bucket_idx, fp, .Delete, FREE_SLOT)) {
                 self.fpcount -= 1;
                 return;
             }
@@ -121,7 +150,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             const bucket_idx = hash & (self.buckets.len - 1);
 
             // Try primary bucket
-            if (FREE_SLOT == self.scan(bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) {
+            if (FREE_SLOT == self.scan(bucket_idx, FREE_SLOT, .Set, fp)) {
                 self.fpcount += 1;
                 return;
             }
@@ -129,7 +158,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             // If too tull already, try to add the fp to the secondary slot without forcing
             const alt_bucket_idx = self.compute_alt_bucket_idx(bucket_idx, fp);
             if (FREE_SLOT != self.homeless_fp) {
-                if (FREE_SLOT == self.scan(alt_bucket_idx, FREE_SLOT, ScanMode{.Set = fp})) {
+                if (FREE_SLOT == self.scan(alt_bucket_idx, FREE_SLOT, .Set, fp)) {
                     self.fpcount += 1;
                     return;
                 } else return error.TooFull;            
@@ -142,10 +171,14 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             var i : usize = 0;
             while (i < 500) : (i += 1) {
                 self.homeless_bucket_idx = self.compute_alt_bucket_idx(self.homeless_bucket_idx, self.homeless_fp);
-                self.homeless_fp = self.scan(self.homeless_bucket_idx, FREE_SLOT, ScanMode{.Force = self.homeless_fp});
+                self.homeless_fp = self.scan(self.homeless_bucket_idx, FREE_SLOT, .Force, self.homeless_fp);
                 if (FREE_SLOT == self.homeless_fp) return;
             }
             // If we went over the while loop, now the homeless slot is occupied.
+        }
+
+        pub fn is_broken(self: *Self) bool {
+            return self.broken;
         }
 
         pub fn is_toofull(self: *Self) bool {
@@ -187,7 +220,7 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
             return (bucket_idx ^ res) & (self.buckets.len - 1);
         }
 
-        inline fn scan(self: *Self, bucket_idx: u64, fp: Tfp, mode: ScanMode) Tfp {
+        inline fn scan(self: *Self, bucket_idx: u64, fp: Tfp, comptime mode: ScanMode, val: Tfp) Tfp {
             comptime var i = 0;
 
             // Search the bucket
@@ -197,8 +230,8 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
                     switch (mode) {
                         .Search => {},
                         .Delete => bucket[i] = FREE_SLOT,
-                        .Set => |val| bucket[i] = val,
-                        .Force => |val| bucket[i] = val,
+                        .Set => bucket[i] = val,
+                        .Force => bucket[i] = val,
                     }
                     return fp;
                 }
@@ -208,20 +241,17 @@ fn CuckooFilter(comptime Tfp: type, comptime buckSize: usize) type {
                 .Search => return FREE_SLOT,
                 .Delete => return FREE_SLOT,
                 .Set => return 1,
-                .Force => |val| {
+                .Force => {
                     // We did not find any free slot, so we must now evict.
-                    // TODO: better random approach
-                    const slot = xoro.random.uintLessThanBiased(usize, buckSize);
+                    const slot = if (self.rand_fn) |rfn| rfn() else XoroRandFnImpl(BucketSizeType).random();
                     const evicted = bucket[slot];
                     bucket[slot] = val;
                     return evicted;
                 },
             }
         }
-
     };
 }
-
 
 test "Hx == (Hy XOR hash(fp))" {
     var memory: [1<<20]u8 align(Filter8.Align) = undefined;
@@ -294,11 +324,11 @@ test "too full when adding too many copies" {
         testing.expect(cf.is_toofull());
         
         // We now are really full.
-        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expectError(error.TooFull, cf.add(0, 1));
         testing.expect(cf.is_toofull());
-        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expectError(error.TooFull, cf.add(0, 1));
         testing.expect(cf.is_toofull());
-        testing.expectError(Errors.TooFull, cf.add(0, 1));
+        testing.expectError(error.TooFull, cf.add(0, 1));
         testing.expect(cf.is_toofull());
         
         i = 0;
@@ -307,15 +337,15 @@ test "too full when adding too many copies" {
         }
 
         // Homeless slot is already occupied.
-        testing.expectError(Errors.TooFull, cf.add(2, 1));
-        testing.expectError(Errors.TooFull, cf.add(2, 1));
-        testing.expectError(Errors.TooFull, cf.add(2, 1));
+        testing.expectError(error.TooFull, cf.add(2, 1));
+        testing.expectError(error.TooFull, cf.add(2, 1));
+        testing.expectError(error.TooFull, cf.add(2, 1));
 
         // Try to fix the situation
         testing.expect(cf.is_toofull());
 
         // This should fail
-        testing.expectError(Errors.TooFull, cf.fix_toofull());
+        testing.expectError(error.TooFull, cf.fix_toofull());
 
         // Make it fixable
         cf.remove(0, 1) catch unreachable;
@@ -343,14 +373,14 @@ test "too full when adding too many copies" {
 
 test "properly breaks when misused" {
     inline for (SupportedVersions) |v| {
-        var memory align(v.cftype.Align) = []u8{0} ** 1024;
+        var memory: [1024]u8 align(v.cftype.Align) = undefined;
         var cf = v.cftype.init(memory[0..]) catch unreachable;
         var fp = @intCast(v.Tfp, 1);
 
-        testing.expectError(Errors.Broken, cf.remove(2, 1));
-        testing.expectError(Errors.Broken, cf.add(2, 1));
-        testing.expectError(Errors.Broken, cf.count());
-        testing.expectError(Errors.Broken, cf.maybe_contains(2, 1));
+        testing.expectError(error.Broken, cf.remove(2, 1));
+        testing.expectError(error.Broken, cf.add(2, 1));
+        testing.expectError(error.Broken, cf.count());
+        testing.expectError(error.Broken, cf.maybe_contains(2, 1));
     }
 }
 
@@ -408,7 +438,7 @@ test "small stress test" {
         //defer test_cases.false_positives.deinit();
 
         // Build an appropriately-sized filter
-        var memory align(v.cftype.Align) = []u8{0} ** v.cftype.size_for(iterations);
+        var memory: [v.cftype.size_for(iterations)]u8 align(v.cftype.Align)= undefined;
         var cf = v.cftype.init(memory[0..]) catch unreachable;
         
         // Test all items for presence (should all be false)
