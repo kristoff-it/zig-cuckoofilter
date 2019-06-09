@@ -50,8 +50,8 @@ work but on the upside:
 - **The hash function can be decided by you, meaning that this library is 
   hashing-function agnostic**.
 
-### It's written in Zig
-Which means that the code is clear, free of C gotchas, and that you can link it 
+### It's written in Zig ([https://ziglang.org])
+Which means that the code is clear, free of C gotchas, and that you can link to it 
 from any C ABI compatible language.
 
 
