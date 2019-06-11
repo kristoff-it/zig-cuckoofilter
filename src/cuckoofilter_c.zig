@@ -28,6 +28,16 @@ export fn seed_default_prng(seed: u64) void {
     cuckoo.seed_default_prng(seed);
 }
 
+// get_default_rng_state
+export fn get_default_prng_state() [2]u64 {
+    return cuckoo.get_default_prng_state();
+}
+
+// set_default_rng_state
+export fn set_default_prng_state(s: [2]u64) void {
+    cuckoo.set_default_prng_state(s);
+}
+
 // size_for
 export fn cf_size_for8(min_capacity: usize) usize {
     return cuckoo.Filter8.size_for(min_capacity);

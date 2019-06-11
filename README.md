@@ -405,6 +405,14 @@ pub fn main() !void {
     // (shared by default by all filters) and will instead only use the 
     // provided function. If you use this functionality, *make sure to
     // set the function pointer again when loading the filter from disk*.
+
+    // If you're fine with the default implementation and want more control
+    // than just seeding, use .get_default_prng_state() and 
+    // .set_default_prng_state(), but beware that you are modifying a 
+    // "singleton" struct used by all filters. If you are in a multi-threaded
+    // context this might cause problems if you are executing 
+    // .add / .delete / .fix_toofull and altering the prng singleton at the 
+    // same time. In that case you will have to customize .rand_fn
 }
 
 fn DilbertRandom() u1 {

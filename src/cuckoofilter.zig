@@ -5,9 +5,19 @@ const testing = std.testing;
 const FREE_SLOT = 0;
 
 // Use the provided function to re-seed the default PRNG implementation.
-var xoro = std.rand.DefaultPrng.init(42);
+var xoro = std.rand.Xoroshiro128.init(42);
 pub fn seed_default_prng(seed: u64) void {
     xoro.seed(seed);
+}
+
+// If you want to read the state of the default PRNG impl:
+pub fn get_default_prng_state() [2]u64 {
+    return xoro.s;
+}
+
+// If you want to set the state of the default PRNG impl:
+pub fn set_default_prng_state(s: [2]u64) void {
+    xoro.s = s;
 }
 
 // Default PRNG implementation.
