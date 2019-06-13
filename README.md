@@ -57,7 +57,12 @@ operates at the same abstraction level (i.e. no gc, explicit memory management,
 pointers, etc). Zig can compile C code and Zig shared object files can be used 
 in a normal C compilation process.
 
-
+### It doesn't manage memory
+All memory allocation/freeing is done by the caller. This makes this library suitable
+for embedding in any kind of ecosystem. For example, take a look at 
+	[kristoff-it/redis-cuckoofilter](https://github.com/kristoff-it/redis-cuckoofilter).
+	
+	
 Using zig-cuckoofilter from C or other languages (Python, Go, JavaScript, ...)
 ------------------------------------------------------------------------------
 
