@@ -1,6 +1,4 @@
-<p align="center">
-    <h1 align="center">zig-cuckoofilter</h1>
-</p>
+<h1 align="center">zig-cuckoofilter</h1>
 <p align="center">
     <a href="https://github.com/kristoff-it/zig-cuckoofilter/releases/latest"><img src="https://badgen.net/github/release/kristoff-it/zig-cuckoofilter"/></a>
     <a href="LICENSE.md"><img src="https://badgen.net/github/license/kristoff-it/zig-cuckoofilter" /></a>
