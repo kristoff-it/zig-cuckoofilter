@@ -1,5 +1,20 @@
-# zig-cuckoofilter
-Production-ready Cuckoo Filters for any C ABI compatible target.
+<p align="center">
+    <h1 align="center">zig-cuckoofilter</h1>
+</p>
+<p align="center">
+    <a href="https://github.com/kristoff-it/zig-cuckoofilter/releases/latest"><img src="https://badgen.net/github/release/kristoff-it/zig-cuckoofilter"/></a>
+    <a href="LICENSE.md"><img src="https://badgen.net/github/license/kristoff-it/zig-cuckoofilter" /></a>
+    <a href="https://twitter.com/croloris"><img src="https://badgen.net/badge/twitter/@croloris/1DA1F2?icon&label" /></a>
+</p>
+
+<p align="center">
+	Production-ready Cuckoo Filters for any C ABI compatible target.
+</p>
+
+Used by
+-------
+
+[![kristoff-it/redis-cuckoofilter - GitHub](https://gh-card.dev/repos/kristoff-it/redis-cuckoofilter.svg)](https://github.com/kristoff-it/redis-cuckoofilter)
 
 
 What's a Cuckoo Filter?
