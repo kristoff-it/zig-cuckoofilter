@@ -44,7 +44,7 @@ What Makes This Library Interesting
 Most Cuckoo Filter implementations available on GitHub get the computer science 
 aspect right but fail at the engineering level, rendering each basically unsuitable
 for most serious use cases. These problems go from not offering a way to 
-persit and restore the filter, up to silent corruption of the filter when its 
+persist and restore the filter, up to silent corruption of the filter when its 
 fill-rate increases too much (because the implementation has no vacant/homeless slot). 
 This implementation covers all these aspects in full, giving to you complete control 
 over the filter while making sure that misusage gets **always** properly reported.
